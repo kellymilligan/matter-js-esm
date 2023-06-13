@@ -2,6 +2,8 @@
 
 A simple port of the [https://github.com/liabru/matter-js/](MatterJS) `src` to ESM module format. The aim is to enable treeshaking on modules where possible.
 
+Deprecated `Grid`, `SAT` and `World` modules/aliases removed.
+
 ## MatterJS
 
 The MIT License (MIT)
