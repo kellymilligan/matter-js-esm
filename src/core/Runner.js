@@ -1,270 +1,272 @@
 /**
-* The `Matter.Runner` module is an optional utility which provides a game loop, 
-* that handles continuously updating a `Matter.Engine` for you within a browser.
-* It is intended for development and debugging purposes, but may also be suitable for simple games.
-* If you are using your own game loop instead, then you do not need the `Matter.Runner` module.
-* Instead just call `Engine.update(engine, delta)` in your own loop.
-*
-* See the included usage [examples](https://github.com/liabru/matter-js/tree/master/examples).
-*
-* @class Runner
-*/
+ * The `Matter.Runner` module is an optional utility which provides a game loop,
+ * that handles continuously updating a `Matter.Engine` for you within a browser.
+ * It is intended for development and debugging purposes, but may also be suitable for simple games.
+ * If you are using your own game loop instead, then you do not need the `Matter.Runner` module.
+ * Instead just call `Engine.update(engine, delta)` in your own loop.
+ *
+ * See the included usage [examples](https://github.com/liabru/matter-js/tree/master/examples).
+ *
+ * @class Runner
+ */
 
-var Runner = {};
+var Runner = {}
 
-module.exports = Runner;
+export default Runner
 
-var Events = require('./Events');
-var Engine = require('./Engine');
-var Common = require('./Common');
+import Events from './Events'
+import Engine from './Engine'
+import Common from './Common'
 
-(function() {
+var _requestAnimationFrame, _cancelAnimationFrame
 
-    var _requestAnimationFrame,
-        _cancelAnimationFrame;
+if (typeof window !== 'undefined') {
+  _requestAnimationFrame =
+    window.requestAnimationFrame ||
+    window.webkitRequestAnimationFrame ||
+    window.mozRequestAnimationFrame ||
+    window.msRequestAnimationFrame
 
-    if (typeof window !== 'undefined') {
-        _requestAnimationFrame = window.requestAnimationFrame || window.webkitRequestAnimationFrame
-                                      || window.mozRequestAnimationFrame || window.msRequestAnimationFrame;
-   
-        _cancelAnimationFrame = window.cancelAnimationFrame || window.mozCancelAnimationFrame 
-                                      || window.webkitCancelAnimationFrame || window.msCancelAnimationFrame;
+  _cancelAnimationFrame =
+    window.cancelAnimationFrame ||
+    window.mozCancelAnimationFrame ||
+    window.webkitCancelAnimationFrame ||
+    window.msCancelAnimationFrame
+}
+
+if (!_requestAnimationFrame) {
+  var _frameTimeout
+
+  _requestAnimationFrame = function (callback) {
+    _frameTimeout = setTimeout(function () {
+      callback(Common.now())
+    }, 1000 / 60)
+  }
+
+  _cancelAnimationFrame = function () {
+    clearTimeout(_frameTimeout)
+  }
+}
+
+/**
+ * Creates a new Runner. The options parameter is an object that specifies any properties you wish to override the defaults.
+ * @method create
+ * @param {} options
+ */
+Runner.create = function (options) {
+  var defaults = {
+    fps: 60,
+    deltaSampleSize: 60,
+    counterTimestamp: 0,
+    frameCounter: 0,
+    deltaHistory: [],
+    timePrev: null,
+    frameRequestId: null,
+    isFixed: false,
+    enabled: true,
+  }
+
+  var runner = Common.extend(defaults, options)
+
+  runner.delta = runner.delta || 1000 / runner.fps
+  runner.deltaMin = runner.deltaMin || 1000 / runner.fps
+  runner.deltaMax = runner.deltaMax || 1000 / (runner.fps * 0.5)
+  runner.fps = 1000 / runner.delta
+
+  return runner
+}
+
+/**
+ * Continuously ticks a `Matter.Engine` by calling `Runner.tick` on the `requestAnimationFrame` event.
+ * @method run
+ * @param {engine} engine
+ */
+Runner.run = function (runner, engine) {
+  // create runner if engine is first argument
+  if (typeof runner.positionIterations !== 'undefined') {
+    engine = runner
+    runner = Runner.create()
+  }
+
+  const run = (time) => {
+    runner.frameRequestId = _requestAnimationFrame(run)
+
+    if (time && runner.enabled) {
+      Runner.tick(runner, engine, time)
     }
+  }
+  run()
 
-    if (!_requestAnimationFrame) {
-        var _frameTimeout;
+  return runner
+}
 
-        _requestAnimationFrame = function(callback){ 
-            _frameTimeout = setTimeout(function() { 
-                callback(Common.now()); 
-            }, 1000 / 60);
-        };
+/**
+ * A game loop utility that updates the engine and renderer by one step (a 'tick').
+ * Features delta smoothing, time correction and fixed or dynamic timing.
+ * Consider just `Engine.update(engine, delta)` if you're using your own loop.
+ * @method tick
+ * @param {runner} runner
+ * @param {engine} engine
+ * @param {number} time
+ */
+Runner.tick = function (runner, engine, time) {
+  var timing = engine.timing,
+    delta
 
-        _cancelAnimationFrame = function() {
-            clearTimeout(_frameTimeout);
-        };
-    }
+  if (runner.isFixed) {
+    // fixed timestep
+    delta = runner.delta
+  } else {
+    // dynamic timestep based on wall clock between calls
+    delta = time - runner.timePrev || runner.delta
+    runner.timePrev = time
 
-    /**
-     * Creates a new Runner. The options parameter is an object that specifies any properties you wish to override the defaults.
-     * @method create
-     * @param {} options
-     */
-    Runner.create = function(options) {
-        var defaults = {
-            fps: 60,
-            deltaSampleSize: 60,
-            counterTimestamp: 0,
-            frameCounter: 0,
-            deltaHistory: [],
-            timePrev: null,
-            frameRequestId: null,
-            isFixed: false,
-            enabled: true
-        };
+    // optimistically filter delta over a few frames, to improve stability
+    runner.deltaHistory.push(delta)
+    runner.deltaHistory = runner.deltaHistory.slice(-runner.deltaSampleSize)
+    delta = Math.min.apply(null, runner.deltaHistory)
 
-        var runner = Common.extend(defaults, options);
+    // limit delta
+    delta = delta < runner.deltaMin ? runner.deltaMin : delta
+    delta = delta > runner.deltaMax ? runner.deltaMax : delta
 
-        runner.delta = runner.delta || 1000 / runner.fps;
-        runner.deltaMin = runner.deltaMin || 1000 / runner.fps;
-        runner.deltaMax = runner.deltaMax || 1000 / (runner.fps * 0.5);
-        runner.fps = 1000 / runner.delta;
+    // update engine timing object
+    runner.delta = delta
+  }
 
-        return runner;
-    };
+  // create an event object
+  var event = {
+    timestamp: timing.timestamp,
+  }
 
-    /**
-     * Continuously ticks a `Matter.Engine` by calling `Runner.tick` on the `requestAnimationFrame` event.
-     * @method run
-     * @param {engine} engine
-     */
-    Runner.run = function(runner, engine) {
-        // create runner if engine is first argument
-        if (typeof runner.positionIterations !== 'undefined') {
-            engine = runner;
-            runner = Runner.create();
-        }
+  Events.trigger(runner, 'beforeTick', event)
 
-        (function run(time){
-            runner.frameRequestId = _requestAnimationFrame(run);
+  // fps counter
+  runner.frameCounter += 1
+  if (time - runner.counterTimestamp >= 1000) {
+    runner.fps = runner.frameCounter * ((time - runner.counterTimestamp) / 1000)
+    runner.counterTimestamp = time
+    runner.frameCounter = 0
+  }
 
-            if (time && runner.enabled) {
-                Runner.tick(runner, engine, time);
-            }
-        })();
+  Events.trigger(runner, 'tick', event)
 
-        return runner;
-    };
+  // update
+  Events.trigger(runner, 'beforeUpdate', event)
 
-    /**
-     * A game loop utility that updates the engine and renderer by one step (a 'tick').
-     * Features delta smoothing, time correction and fixed or dynamic timing.
-     * Consider just `Engine.update(engine, delta)` if you're using your own loop.
-     * @method tick
-     * @param {runner} runner
-     * @param {engine} engine
-     * @param {number} time
-     */
-    Runner.tick = function(runner, engine, time) {
-        var timing = engine.timing,
-            delta;
+  Engine.update(engine, delta)
 
-        if (runner.isFixed) {
-            // fixed timestep
-            delta = runner.delta;
-        } else {
-            // dynamic timestep based on wall clock between calls
-            delta = (time - runner.timePrev) || runner.delta;
-            runner.timePrev = time;
+  Events.trigger(runner, 'afterUpdate', event)
 
-            // optimistically filter delta over a few frames, to improve stability
-            runner.deltaHistory.push(delta);
-            runner.deltaHistory = runner.deltaHistory.slice(-runner.deltaSampleSize);
-            delta = Math.min.apply(null, runner.deltaHistory);
+  Events.trigger(runner, 'afterTick', event)
+}
 
-            // limit delta
-            delta = delta < runner.deltaMin ? runner.deltaMin : delta;
-            delta = delta > runner.deltaMax ? runner.deltaMax : delta;
+/**
+ * Ends execution of `Runner.run` on the given `runner`, by canceling the animation frame request event loop.
+ * If you wish to only temporarily pause the runner, see `runner.enabled` instead.
+ * @method stop
+ * @param {runner} runner
+ */
+Runner.stop = function (runner) {
+  _cancelAnimationFrame(runner.frameRequestId)
+}
 
-            // update engine timing object
-            runner.delta = delta;
-        }
+/**
+ * Alias for `Runner.run`.
+ * @method start
+ * @param {runner} runner
+ * @param {engine} engine
+ */
+Runner.start = function (runner, engine) {
+  Runner.run(runner, engine)
+}
 
-        // create an event object
-        var event = {
-            timestamp: timing.timestamp
-        };
+/*
+ *
+ *  Events Documentation
+ *
+ */
 
-        Events.trigger(runner, 'beforeTick', event);
+/**
+ * Fired at the start of a tick, before any updates to the engine or timing
+ *
+ * @event beforeTick
+ * @param {} event An event object
+ * @param {number} event.timestamp The engine.timing.timestamp of the event
+ * @param {} event.source The source object of the event
+ * @param {} event.name The name of the event
+ */
 
-        // fps counter
-        runner.frameCounter += 1;
-        if (time - runner.counterTimestamp >= 1000) {
-            runner.fps = runner.frameCounter * ((time - runner.counterTimestamp) / 1000);
-            runner.counterTimestamp = time;
-            runner.frameCounter = 0;
-        }
+/**
+ * Fired after engine timing updated, but just before update
+ *
+ * @event tick
+ * @param {} event An event object
+ * @param {number} event.timestamp The engine.timing.timestamp of the event
+ * @param {} event.source The source object of the event
+ * @param {} event.name The name of the event
+ */
 
-        Events.trigger(runner, 'tick', event);
+/**
+ * Fired at the end of a tick, after engine update and after rendering
+ *
+ * @event afterTick
+ * @param {} event An event object
+ * @param {number} event.timestamp The engine.timing.timestamp of the event
+ * @param {} event.source The source object of the event
+ * @param {} event.name The name of the event
+ */
 
-        // update
-        Events.trigger(runner, 'beforeUpdate', event);
+/**
+ * Fired before update
+ *
+ * @event beforeUpdate
+ * @param {} event An event object
+ * @param {number} event.timestamp The engine.timing.timestamp of the event
+ * @param {} event.source The source object of the event
+ * @param {} event.name The name of the event
+ */
 
-        Engine.update(engine, delta);
+/**
+ * Fired after update
+ *
+ * @event afterUpdate
+ * @param {} event An event object
+ * @param {number} event.timestamp The engine.timing.timestamp of the event
+ * @param {} event.source The source object of the event
+ * @param {} event.name The name of the event
+ */
 
-        Events.trigger(runner, 'afterUpdate', event);
+/*
+ *
+ *  Properties Documentation
+ *
+ */
 
-        Events.trigger(runner, 'afterTick', event);
-    };
+/**
+ * A flag that specifies whether the runner is running or not.
+ *
+ * @property enabled
+ * @type boolean
+ * @default true
+ */
 
-    /**
-     * Ends execution of `Runner.run` on the given `runner`, by canceling the animation frame request event loop.
-     * If you wish to only temporarily pause the runner, see `runner.enabled` instead.
-     * @method stop
-     * @param {runner} runner
-     */
-    Runner.stop = function(runner) {
-        _cancelAnimationFrame(runner.frameRequestId);
-    };
+/**
+ * A `Boolean` that specifies if the runner should use a fixed timestep (otherwise it is variable).
+ * If timing is fixed, then the apparent simulation speed will change depending on the frame rate (but behaviour will be deterministic).
+ * If the timing is variable, then the apparent simulation speed will be constant (approximately, but at the cost of determininism).
+ *
+ * @property isFixed
+ * @type boolean
+ * @default false
+ */
 
-    /**
-     * Alias for `Runner.run`.
-     * @method start
-     * @param {runner} runner
-     * @param {engine} engine
-     */
-    Runner.start = function(runner, engine) {
-        Runner.run(runner, engine);
-    };
-
-    /*
-    *
-    *  Events Documentation
-    *
-    */
-
-    /**
-    * Fired at the start of a tick, before any updates to the engine or timing
-    *
-    * @event beforeTick
-    * @param {} event An event object
-    * @param {number} event.timestamp The engine.timing.timestamp of the event
-    * @param {} event.source The source object of the event
-    * @param {} event.name The name of the event
-    */
-
-    /**
-    * Fired after engine timing updated, but just before update
-    *
-    * @event tick
-    * @param {} event An event object
-    * @param {number} event.timestamp The engine.timing.timestamp of the event
-    * @param {} event.source The source object of the event
-    * @param {} event.name The name of the event
-    */
-
-    /**
-    * Fired at the end of a tick, after engine update and after rendering
-    *
-    * @event afterTick
-    * @param {} event An event object
-    * @param {number} event.timestamp The engine.timing.timestamp of the event
-    * @param {} event.source The source object of the event
-    * @param {} event.name The name of the event
-    */
-
-    /**
-    * Fired before update
-    *
-    * @event beforeUpdate
-    * @param {} event An event object
-    * @param {number} event.timestamp The engine.timing.timestamp of the event
-    * @param {} event.source The source object of the event
-    * @param {} event.name The name of the event
-    */
-
-    /**
-    * Fired after update
-    *
-    * @event afterUpdate
-    * @param {} event An event object
-    * @param {number} event.timestamp The engine.timing.timestamp of the event
-    * @param {} event.source The source object of the event
-    * @param {} event.name The name of the event
-    */
-
-    /*
-    *
-    *  Properties Documentation
-    *
-    */
-
-    /**
-     * A flag that specifies whether the runner is running or not.
-     *
-     * @property enabled
-     * @type boolean
-     * @default true
-     */
-
-    /**
-     * A `Boolean` that specifies if the runner should use a fixed timestep (otherwise it is variable).
-     * If timing is fixed, then the apparent simulation speed will change depending on the frame rate (but behaviour will be deterministic).
-     * If the timing is variable, then the apparent simulation speed will be constant (approximately, but at the cost of determininism).
-     *
-     * @property isFixed
-     * @type boolean
-     * @default false
-     */
-
-    /**
-     * A `Number` that specifies the time step between updates in milliseconds.
-     * If `engine.timing.isFixed` is set to `true`, then `delta` is fixed.
-     * If it is `false`, then `delta` can dynamically change to maintain the correct apparent simulation speed.
-     *
-     * @property delta
-     * @type number
-     * @default 1000 / 60
-     */
-
-})();
+/**
+ * A `Number` that specifies the time step between updates in milliseconds.
+ * If `engine.timing.isFixed` is set to `true`, then `delta` is fixed.
+ * If it is `false`, then `delta` can dynamically change to maintain the correct apparent simulation speed.
+ *
+ * @property delta
+ * @type number
+ * @default 1000 / 60
+ */
